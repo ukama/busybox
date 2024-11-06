@@ -9,7 +9,6 @@
 //config:config IFPLUGD
 //config:	bool "ifplugd (10 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	Network interface plug detection daemon.
 
@@ -21,7 +20,7 @@
 //usage:       "[OPTIONS]"
 //usage:#define ifplugd_full_usage "\n\n"
 //usage:       "Network interface plug detection daemon\n"
-//usage:     "\n	-n		Don't daemonize"
+//usage:     "\n	-n		Run in foreground"
 //usage:     "\n	-s		Don't log to syslog"
 //usage:     "\n	-i IFACE	Interface"
 //usage:     "\n	-f/-F		Treat link detection error as link down/link up"
@@ -29,6 +28,7 @@
 //usage:     "\n	-a		Don't up interface at each link probe"
 //usage:     "\n	-M		Monitor creation/destruction of interface"
 //usage:     "\n			(otherwise it must exist)"
+//usage:     "\n	-A		Don't up newly appeared interface"
 //usage:     "\n	-r PROG		Script to run"
 //usage:     "\n	-x ARG		Extra argument for script"
 //usage:     "\n	-I		Don't exit on nonzero exit code from script"
@@ -95,7 +95,7 @@ Netlink code then can be just dropped (1k or more?)
 #define IFPLUGD_ENV_CURRENT "IFPLUGD_CURRENT"
 
 enum {
-	FLAG_NO_AUTO			= 1 <<  0, // -a, Do not enable interface automatically
+	FLAG_NO_AUTO			= 1 <<  0, // -a, Don't up interface at each link probe
 	FLAG_NO_DAEMON			= 1 <<  1, // -n, Do not daemonize
 	FLAG_NO_SYSLOG			= 1 <<  2, // -s, Do not use syslog, use stderr instead
 	FLAG_IGNORE_FAIL		= 1 <<  3, // -f, Ignore detection failure, retry instead (failure is treated as DOWN)
@@ -112,14 +112,15 @@ enum {
 	FLAG_INITIAL_DOWN		= 1 << 14, // -l, Run "down" script on startup if no cable is detected
 	FLAG_EXTRA_ARG			= 1 << 15, // -x, Specify an extra argument for action script
 	FLAG_MONITOR			= 1 << 16, // -M, Use interface monitoring
+	FLAG_NO_UP_NEW_IFACE		= 1 << 17, // -A, Don't up newly appeared interface
 #if ENABLE_FEATURE_PIDFILE
-	FLAG_KILL			= 1 << 17, // -k, Kill a running daemon
+	FLAG_KILL			= 1 << 18, // -k, Kill a running daemon
 #endif
 };
 #if ENABLE_FEATURE_PIDFILE
-# define OPTION_STR "+ansfFi:r:It:+u:+d:+m:pqlx:Mk"
+# define OPTION_STR "+ansfFi:r:It:+u:+d:+m:pqlx:MAk"
 #else
-# define OPTION_STR "+ansfFi:r:It:+u:+d:+m:pqlx:M"
+# define OPTION_STR "+ansfFi:r:It:+u:+d:+m:pqlx:MA"
 #endif
 
 enum { // interface status
@@ -305,7 +306,7 @@ static const char api_modes[] ALIGN1 = "empwia";
 static const struct {
 	const char *name;
 	smallint (*func)(void);
-} method_table[] = {
+} method_table[] ALIGN_PTR = {
 	{ "SIOCETHTOOL"       , &detect_link_ethtool },
 	{ "SIOCGMIIPHY"       , &detect_link_mii     },
 	{ "SIOCDEVPRIVATE"    , &detect_link_priv    },
@@ -388,7 +389,7 @@ static void up_iface(void)
 
 static void maybe_up_new_iface(void)
 {
-	if (!(option_mask32 & FLAG_NO_AUTO))
+	if (!(option_mask32 & FLAG_NO_UP_NEW_IFACE))
 		up_iface();
 
 #if 0 /* bloat */
@@ -736,7 +737,7 @@ int ifplugd_main(int argc UNUSED_PARAM, char **argv)
 					delay_time += G.delay_down;
 #if 0  /* if you are back in 1970... */
 				if (delay_time == 0) {
-					sleep(1);
+					sleep1();
 					delay_time = 1;
 				}
 #endif

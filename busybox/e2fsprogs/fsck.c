@@ -190,7 +190,7 @@ struct globals {
  * Required for the uber-silly devfs /dev/ide/host1/bus2/target3/lun3
  * pathames.
  */
-static const char *const devfs_hier[] = {
+static const char *const devfs_hier[] ALIGN_PTR = {
 	"host", "bus", "target", "lun", NULL
 };
 #endif
@@ -480,7 +480,7 @@ static int wait_one(int flags)
 			 * time to set up the signal handler
 			 */
 			if (inst2->start_time >= time(NULL) - 1)
-				sleep(1);
+				sleep1();
 			kill(inst2->pid, SIGUSR1);
 			inst2->flags |= FLAG_PROGRESS;
 			break;

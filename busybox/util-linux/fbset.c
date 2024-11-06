@@ -14,7 +14,6 @@
 //config:config FBSET
 //config:	bool "fbset (5.9 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	fbset is used to show or change the settings of a Linux frame buffer
 //config:	device. The frame buffer device provides a simple and unique
@@ -194,7 +193,7 @@ static const struct cmdoptions_t {
 	const char name[9];
 	const unsigned char param_count;
 	const unsigned char code;
-} g_cmdoptions[] = {
+} g_cmdoptions[] ALIGN1 = {
 	/*"12345678" + NUL */
 //TODO: convert to index_in_strings()
 	{ "fb"      , 1, CMD_FB       },
@@ -268,7 +267,7 @@ static void ss(uint32_t *x, uint32_t flag, char *buf, const char *what)
  *     vsync high
  * endmode
  */
-static int read_mode_db(struct fb_var_screeninfo *base, const char *fn,
+static NOINLINE int read_mode_db(struct fb_var_screeninfo *base, const char *fn,
 					const char *mode)
 {
 	char *token[2], *p, *s;
@@ -519,7 +518,13 @@ int fbset_main(int argc, char **argv)
 			case CMD_DEPTH:
 				var_set.bits_per_pixel = xatou32(argv[1]);
 				break;
+			case CMD_PIXCLOCK:
+				var_set.pixclock = xatou32(argv[1]);
+				break;
 #endif
+			default:
+				bb_perror_msg_and_die("option '%s' not handled",
+						      g_cmdoptions[i].name);
 			}
 			switch (g_cmdoptions[i].code) {
 			case CMD_FB:

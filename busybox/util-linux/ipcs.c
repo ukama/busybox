@@ -10,7 +10,6 @@
 //config:config IPCS
 //config:	bool "ipcs (11 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	The ipcs utility is used to provide information on the currently
 //config:	allocated System V interprocess (IPC) objects in the system.
@@ -601,15 +600,15 @@ int ipcs_main(int argc UNUSED_PARAM, char **argv)
 		id = xatoi(opt_i);
 		if (opt & flag_shm) {
 			print_shm(id);
-			fflush_stdout_and_exit(EXIT_SUCCESS);
+			fflush_stdout_and_exit_SUCCESS();
 		}
 		if (opt & flag_sem) {
 			print_sem(id);
-			fflush_stdout_and_exit(EXIT_SUCCESS);
+			fflush_stdout_and_exit_SUCCESS();
 		}
 		if (opt & flag_msg) {
 			print_msg(id);
-			fflush_stdout_and_exit(EXIT_SUCCESS);
+			fflush_stdout_and_exit_SUCCESS();
 		}
 		bb_show_usage();
 	}
@@ -634,5 +633,5 @@ int ipcs_main(int argc UNUSED_PARAM, char **argv)
 		do_sem(format);
 		bb_putchar('\n');
 	}
-	fflush_stdout_and_exit(EXIT_SUCCESS);
+	fflush_stdout_and_exit_SUCCESS();
 }

@@ -736,7 +736,7 @@ static void pause_and_low_level_reboot(unsigned magic)
 	pid_t pid;
 
 	/* Allow time for last message to reach serial console, etc */
-	sleep(1);
+	sleep1();
 
 	/* We have to fork here, since the kernel calls do_exit(EXIT_SUCCESS)
 	 * in linux/kernel/sys.c, which can cause the machine to panic when
@@ -744,15 +744,15 @@ static void pause_and_low_level_reboot(unsigned magic)
 	pid = vfork();
 	if (pid == 0) { /* child */
 		reboot(magic);
-		_exit(EXIT_SUCCESS);
+		_exit_SUCCESS();
 	}
 	/* Used to have "while (1) sleep(1)" here.
 	 * However, in containers reboot() call is ignored, and with that loop
 	 * we would eternally sleep here - not what we want.
 	 */
 	waitpid(pid, NULL, 0);
-	sleep(1); /* paranoia */
-	_exit(EXIT_SUCCESS);
+	sleep1(); /* paranoia */
+	_exit_SUCCESS();
 }
 
 static void run_shutdown_and_kill_processes(void)
@@ -768,12 +768,12 @@ static void run_shutdown_and_kill_processes(void)
 	kill(-1, SIGTERM);
 	message(L_CONSOLE, "Sent SIG%s to all processes", "TERM");
 	sync();
-	sleep(1);
+	sleep1();
 
 	kill(-1, SIGKILL);
 	message(L_CONSOLE, "Sent SIG%s to all processes", "KILL");
 	sync();
-	/*sleep(1); - callers take care about making a pause */
+	/*sleep1(); - callers take care about making a pause */
 }
 
 /* Signal handling by init:
@@ -904,7 +904,7 @@ static void stop_handler(int sig UNUSED_PARAM)
 		wpid = wait_any_nohang(NULL);
 		mark_terminated(wpid);
 		if (wpid <= 0) /* no processes exited? sleep a bit */
-			sleep(1);
+			sleep1();
 	}
 
 	signal(SIGCONT, SIG_DFL);
@@ -942,7 +942,7 @@ static void reload_inittab(void)
 			for (a = G.init_action_list; a; a = a->next)
 				if (a->action_type == 0 && a->pid != 0)
 					kill(a->pid, SIGKILL);
-			_exit(EXIT_SUCCESS);
+			_exit_SUCCESS();
 		}
 	}
 #endif
@@ -1105,10 +1105,14 @@ int init_main(int argc UNUSED_PARAM, char **argv)
 	setsid();
 
 	/* Make sure environs is set to something sane */
-	putenv((char *) "HOME=/");
 	putenv((char *) bb_PATH_root_path);
 	putenv((char *) "SHELL=/bin/sh");
 	putenv((char *) "USER=root"); /* needed? why? */
+	/* Linux kernel sets HOME="/" when execing init,
+	 * and it can be overridden (but not unset?) on kernel's command line.
+	 * We used to set it to "/" here, but now we do not:
+	 */
+	//putenv((char *) "HOME=/");
 
 	if (argv[1])
 		xsetenv("RUNLEVEL", argv[1]);
@@ -1209,7 +1213,7 @@ int init_main(int argc UNUSED_PARAM, char **argv)
 		}
 
 		/* Don't consume all CPU time - sleep a bit */
-		sleep(1);
+		sleep1();
 	} /* while (1) */
 }
 

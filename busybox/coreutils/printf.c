@@ -122,6 +122,7 @@ static void FAST_FUNC conv_strtod(const char *arg, void *result)
 	char *end;
 	/* Well, this one allows leading whitespace... so what? */
 	/* What I like much less is that "-" accepted too! :( */
+//TODO: needs setlocale(LC_NUMERIC, "C")?
 	*(double*)result = strtod(arg, &end);
 	if (end[0]) {
 		errno = ERANGE;
@@ -312,7 +313,7 @@ static char **print_formatted(char *f, char **argv, int *conv_err)
 				}
 				break;
 			}
-			if (*f && strchr("-+ #", *f)) {
+			while (*f && strchr("-+ #0", *f)) {
 				++f;
 				++direc_length;
 			}
@@ -427,7 +428,7 @@ int printf_main(int argc UNUSED_PARAM, char **argv)
 	if (argv[1] && argv[1][0] == '-' && argv[1][1] == '-' && !argv[1][2])
 		argv++;
 	if (!argv[1]) {
-		if (ENABLE_ASH_PRINTF
+		if ((ENABLE_ASH_PRINTF || ENABLE_HUSH_PRINTF)
 		 && applet_name[0] != 'p'
 		) {
 			bb_simple_error_msg("usage: printf FORMAT [ARGUMENT...]");

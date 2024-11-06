@@ -27,7 +27,7 @@
 //kbuild:lib-$(CONFIG_FEATURE_UDHCP_RFC3397) += domain_codec.o
 
 //usage:#define udhcpd_trivial_usage
-//usage:       "[-fS] [-I ADDR]" IF_FEATURE_UDHCP_PORT(" [-P N]") " [CONFFILE]"
+//usage:       "[-fS] [-I ADDR] [-a MSEC]" IF_FEATURE_UDHCP_PORT(" [-P PORT]") " [CONFFILE]"
 //usage:#define udhcpd_full_usage "\n\n"
 //usage:       "DHCP server\n"
 //usage:     "\n	-f	Run in foreground"
@@ -35,7 +35,7 @@
 //usage:     "\n	-I ADDR	Local address"
 //usage:     "\n	-a MSEC	Timeout for ARP ping (default 2000)"
 //usage:	IF_FEATURE_UDHCP_PORT(
-//usage:     "\n	-P N	Use port N (default 67)"
+//usage:     "\n	-P PORT	Use PORT (default 67)"
 //usage:	)
 //usage:     "\nSignals:"
 //usage:     "\n	USR1	Update lease file"
@@ -45,6 +45,12 @@
 #include "common.h"
 #include "dhcpc.h"
 #include "dhcpd.h"
+
+#if ENABLE_PID_FILE_PATH
+#define PID_FILE_PATH CONFIG_PID_FILE_PATH
+#else
+#define PID_FILE_PATH "/var/run"
+#endif
 
 /* globals */
 #define g_leases ((struct dyn_lease*)ptr_to_globals)
@@ -289,12 +295,11 @@ static uint32_t find_free_or_expired_nip(const uint8_t *safe_mac, unsigned arppi
 		uint32_t nip;
 		struct dyn_lease *lease;
 
-		/* ie, 192.168.55.0 */
-		if ((addr & 0xff) == 0)
-			goto next_addr;
-		/* ie, 192.168.55.255 */
-		if ((addr & 0xff) == 0xff)
-			goto next_addr;
+		/* (Addresses ending in .0 or .255 can legitimately be allocated
+		 * in various situations, so _don't_ skip these.  The user needs
+		 * to choose start_ip and end_ip correctly for a particular
+		 * network environment.) */
+
 		nip = htonl(addr);
 		/* skip our own address */
 		if (nip == server_data.server_nip)
@@ -392,7 +397,7 @@ struct config_keyword {
 
 #define OFS(field) offsetof(struct server_data_t, field)
 
-static const struct config_keyword keywords[] = {
+static const struct config_keyword keywords[] ALIGN_PTR = {
 	/* keyword        handler           variable address    default */
 	{"start"        , udhcp_str2nip   , OFS(start_ip     ), "192.168.0.20"},
 	{"end"          , udhcp_str2nip   , OFS(end_ip       ), "192.168.0.254"},
@@ -406,7 +411,7 @@ static const struct config_keyword keywords[] = {
 	{"offer_time"   , read_u32        , OFS(offer_time   ), "60"},
 	{"min_lease"    , read_u32        , OFS(min_lease_sec), "60"},
 	{"lease_file"   , read_str        , OFS(lease_file   ), LEASES_FILE},
-	{"pidfile"      , read_str        , OFS(pidfile      ), "/var/run/udhcpd.pid"},
+	{"pidfile"      , read_str        , OFS(pidfile      ), PID_FILE_PATH "/udhcpd.pid"},
 	{"siaddr"       , udhcp_str2nip   , OFS(siaddr_nip   ), "0.0.0.0"},
 	/* keywords with no defaults must be last! */
 	{"option"       , read_optset     , OFS(options      ), ""},
@@ -446,6 +451,8 @@ static NOINLINE void read_config(const char *file)
 
 	server_data.start_ip = ntohl(server_data.start_ip);
 	server_data.end_ip = ntohl(server_data.end_ip);
+	if (server_data.start_ip > server_data.end_ip)
+		bb_error_msg_and_die("bad start/end IP range in %s", file);
 }
 
 static void write_leases(void)
@@ -606,7 +613,12 @@ static void send_packet_to_relay(struct dhcp_packet *dhcp_pkt)
 
 	udhcp_send_kernel_packet(dhcp_pkt,
 			server_data.server_nip, SERVER_PORT,
-			dhcp_pkt->gateway_nip, SERVER_PORT);
+			dhcp_pkt->gateway_nip, SERVER_PORT,
+	/* Yes, relay agents receive (and send) all their packets on SERVER_PORT,
+	 * even those which are clients' requests and would normally
+	 * (i.e. without relay) use CLIENT_PORT. See RFC 1542.
+	 */
+			server_data.interface);
 }
 
 static void send_packet(struct dhcp_packet *dhcp_pkt, int force_broadcast)
@@ -852,7 +864,6 @@ int udhcpd_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 {
 	int server_socket = -1, retval;
-	uint8_t *state;
 	unsigned timeout_end;
 	unsigned num_ips;
 	unsigned opt;
@@ -871,6 +882,12 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 	/* Setup the signal pipe on fds 3,4 - must be before openlog() */
 	udhcp_sp_setup();
 
+#define OPT_f (1 << 0)
+#define OPT_S (1 << 1)
+#define OPT_I (1 << 2)
+#define OPT_v (1 << 3)
+#define OPT_a (1 << 4)
+#define OPT_P (1 << 5)
 	opt = getopt32(argv, "^"
 		"fSI:va:"IF_FEATURE_UDHCP_PORT("P:")
 		"\0"
@@ -881,24 +898,24 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 		, &str_a
 		IF_FEATURE_UDHCP_PORT(, &str_P)
 		IF_UDHCP_VERBOSE(, &dhcp_verbose)
-		);
-	if (!(opt & 1)) { /* no -f */
+	);
+	if (!(opt & OPT_f)) { /* no -f */
 		bb_daemonize_or_rexec(0, argv);
 		logmode = LOGMODE_NONE;
 	}
 	/* update argv after the possible vfork+exec in daemonize */
 	argv += optind;
-	if (opt & 2) { /* -S */
+	if (opt & OPT_S) {
 		openlog(applet_name, LOG_PID, LOG_DAEMON);
 		logmode |= LOGMODE_SYSLOG;
 	}
-	if (opt & 4) { /* -I */
+	if (opt & OPT_I) {
 		len_and_sockaddr *lsa = xhost_and_af2sockaddr(str_I, 0, AF_INET);
 		server_data.server_nip = lsa->u.sin.sin_addr.s_addr;
 		free(lsa);
 	}
 #if ENABLE_FEATURE_UDHCP_PORT
-	if (opt & 32) { /* -P */
+	if (opt & OPT_P) {
 		SERVER_PORT = xatou16(str_P);
 		CLIENT_PORT = SERVER_PORT + 1;
 	}
@@ -918,7 +935,7 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 
 	bb_simple_info_msg("started, v"BB_VER);
 
-	option = udhcp_find_option(server_data.options, DHCP_LEASE_TIME);
+	option = udhcp_find_option(server_data.options, DHCP_LEASE_TIME, /*dhcpv6:*/ 0);
 	server_data.max_lease_sec = DEFAULT_LEASE_TIME;
 	if (option) {
 		move_from_unaligned32(server_data.max_lease_sec, option->data + OPT_DATA);
@@ -954,6 +971,7 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 		struct dhcp_packet packet;
 		int bytes;
 		int tv;
+		uint8_t *msg_type;
 		uint8_t *server_id_opt;
 		uint8_t *requested_ip_opt;
 		uint32_t requested_nip;
@@ -1011,6 +1029,9 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 		 * socket read inside this call is restarted on caught signals.
 		 */
 		bytes = udhcp_recv_kernel_packet(&packet, server_socket);
+//NB: we do not check source port here. Should we?
+//It should be CLIENT_PORT for clients,
+//or SERVER_PORT for relay agents (in which case giaddr must be != 0.0.0.0)
 		if (bytes < 0) {
 			/* bytes can also be -2 ("bad packet data") */
 			if (bytes == -1 && errno != EINTR) {
@@ -1028,8 +1049,8 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 			bb_info_msg("not a REQUEST%s", ", ignoring packet");
 			continue;
 		}
-		state = udhcp_get_option(&packet, DHCP_MESSAGE_TYPE);
-		if (state == NULL || state[0] < DHCP_MINTYPE || state[0] > DHCP_MAXTYPE) {
+		msg_type = udhcp_get_option(&packet, DHCP_MESSAGE_TYPE);
+		if (!msg_type || msg_type[0] < DHCP_MINTYPE || msg_type[0] > DHCP_MAXTYPE) {
 			bb_info_msg("no or bad message type option%s", ", ignoring packet");
 			continue;
 		}
@@ -1041,7 +1062,7 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 			move_from_unaligned32(server_id_network_order, server_id_opt);
 			if (server_id_network_order != server_data.server_nip) {
 				/* client talks to somebody else */
-				log1("server ID doesn't match%s", ", ignoring");
+				log1("server ID doesn't match%s", ", ignoring packet");
 				continue;
 			}
 		}
@@ -1065,7 +1086,7 @@ int udhcpd_main(int argc UNUSED_PARAM, char **argv)
 			move_from_unaligned32(requested_nip, requested_ip_opt);
 		}
 
-		switch (state[0]) {
+		switch (msg_type[0]) {
 
 		case DHCPDISCOVER:
 			log1("received %s", "DISCOVER");
@@ -1164,7 +1185,7 @@ o DHCPREQUEST generated during REBINDING state:
 			if (!requested_ip_opt) {
 				requested_nip = packet.ciaddr;
 				if (requested_nip == 0) {
-					log1("no requested IP and no ciaddr%s", ", ignoring");
+					log1("no requested IP and no ciaddr%s", ", ignoring packet");
 					break;
 				}
 			}

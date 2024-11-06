@@ -21,7 +21,7 @@
 
 #include "libbb.h"
 
-static const struct suffix_mult duration_suffixes[] = {
+static const struct suffix_mult duration_suffixes[] ALIGN_SUFFIX = {
 	{ "s", 1 },
 	{ "m", 60 },
 	{ "h", 60*60 },
@@ -37,8 +37,18 @@ duration_t FAST_FUNC parse_duration_str(char *str)
 	if (strchr(str, '.')) {
 		double d;
 		char *pp;
-		int len = strspn(str, "0123456789.");
-		char sv = str[len];
+		int len;
+		char sv;
+
+# if ENABLE_LOCALE_SUPPORT
+		/* Undo busybox.c: on input, we want to use dot
+		 * as fractional separator in strtod(),
+		 * regardless of current locale
+		 */
+		setlocale(LC_NUMERIC, "C");
+# endif
+		len = strspn(str, "0123456789.");
+		sv = str[len];
 		str[len] = '\0';
 		errno = 0;
 		d = strtod(str, &pp);
@@ -66,10 +76,14 @@ void FAST_FUNC sleep_for_duration(duration_t duration)
 		ts.tv_sec = duration;
 		ts.tv_nsec = (duration - ts.tv_sec) * 1000000000;
 	}
-	do {
-		errno = 0;
-		nanosleep(&ts, &ts);
-	} while (errno == EINTR);
+	/* NB: ENABLE_ASH_SLEEP requires that we do NOT loop on EINTR here:
+	 * otherwise, traps won't execute until we finish looping.
+	 */
+	//do {
+	//	errno = 0;
+	//	nanosleep(&ts, &ts);
+	//} while (errno == EINTR);
+	nanosleep(&ts, &ts);
 }
 #else
 duration_t FAST_FUNC parse_duration_str(char *str)

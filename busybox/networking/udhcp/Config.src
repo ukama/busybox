@@ -6,7 +6,6 @@
 config UDHCPD
 	bool "udhcpd (21 kb)"
 	default y
-	select PLATFORM_LINUX
 	help
 	udhcpd is a DHCP server geared primarily toward embedded systems,
 	while striving to be fully functional and RFC compliant.
@@ -62,7 +61,6 @@ config DHCPRELAY
 config UDHCPC
 	bool "udhcpc (24 kb)"
 	default y
-	select PLATFORM_LINUX
 	help
 	udhcpc is a DHCP client geared primarily toward embedded systems,
 	while striving to be fully functional and RFC compliant.
@@ -94,17 +92,30 @@ config FEATURE_UDHCPC_SANITIZEOPT
 config UDHCPC_DEFAULT_SCRIPT
 	string "Absolute path to config script"
 	default "/usr/share/udhcpc/default.script"
-	depends on UDHCPC || UDHCPC6
+	depends on UDHCPC
 	help
 	This script is called after udhcpc receives an answer. See
 	examples/udhcp for a working example. Normally it is safe
 	to leave this untouched.
+
+config UDHCPC6_DEFAULT_SCRIPT
+	string "Absolute path to config script for IPv6"
+	default "/usr/share/udhcpc/default6.script"
+	depends on UDHCPC6
 
 # udhcpc6 config is inserted here:
 INSERT
 
 comment "Common options for DHCP applets"
         depends on UDHCPD || UDHCPC || UDHCPC6 || DHCPRELAY
+
+config UDHCPC_DEFAULT_INTERFACE
+	string "Default interface name"
+	default "eth0"
+	depends on UDHCPC || UDHCPC6
+	help
+	The interface that will be used if no other interface is
+	specified on the commandline.
 
 config FEATURE_UDHCP_PORT
 	bool "Enable '-P port' option for udhcpd and udhcpc"

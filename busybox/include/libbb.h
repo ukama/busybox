@@ -106,7 +106,11 @@
 #  define updwtmpx updwtmp
 #  define _PATH_UTMPX _PATH_UTMP
 # else
-#  include <utmp.h>
+#  if !defined(__FreeBSD__)
+#   include <utmp.h>
+#  else
+#   define _PATH_UTMPX "/var/run/utx.active"
+#  endif
 #  include <utmpx.h>
 #  if defined _PATH_UTMP && !defined _PATH_UTMPX
 #   define _PATH_UTMPX _PATH_UTMP
@@ -188,6 +192,28 @@ int klogctl(int type, char *b, int len);
 # define BUFSIZ 4096
 #endif
 
+#if __GNUC_PREREQ(5,0)
+/* Since musl is apparently unable to get it right and would use
+ * a function call to a single-instruction function of "bswap %eax",
+ * reroute to gcc builtins:
+ */
+# undef  bswap_16
+# undef  bswap_32
+# undef  bswap_64
+# define bswap_16(x) __builtin_bswap16(x)
+# define bswap_32(x) __builtin_bswap32(x)
+# define bswap_64(x) __builtin_bswap64(x)
+# if BB_LITTLE_ENDIAN
+#   undef ntohs
+#   undef htons
+#   undef ntohl
+#   undef htonl
+#   define ntohs(x) __builtin_bswap16(x)
+#   define htons(x) __builtin_bswap16(x)
+#   define ntohl(x) __builtin_bswap32(x)
+#   define htonl(x) __builtin_bswap32(x)
+# endif
+#endif
 
 /* Busybox does not use threads, we can speed up stdio. */
 #ifdef HAVE_UNLOCKED_STDIO
@@ -279,9 +305,13 @@ typedef unsigned long long uoff_t;
 # endif
 #else
 /* CONFIG_LFS is off */
-# if UINT_MAX == 0xffffffff
-/* While sizeof(off_t) == sizeof(int), off_t is typedef'ed to long anyway.
- * gcc will throw warnings on printf("%d", off_t). Crap... */
+/* sizeof(off_t) == sizeof(long).
+ * May or may not be == sizeof(int). If it is, use xatoi_positive()
+ * and bb_strtou() instead of xatoul_range() and bb_strtoul().
+ * Even if sizeof(off_t) == sizeof(int), off_t is typedef'ed to long anyway.
+ * gcc will throw warnings on printf("%d", off_t)... Have to use %ld etc.
+ */
+# if UINT_MAX == ULONG_MAX
 typedef unsigned long uoff_t;
 #  define XATOOFF(a) xatoi_positive(a)
 #  define BB_STRTOOFF bb_strtou
@@ -339,12 +369,27 @@ struct BUG_off_t_size_is_misdetected {
 #endif
 #endif
 
-#if defined(__GLIBC__)
-/* glibc uses __errno_location() to get a ptr to errno */
-/* We can just memorize it once - no multithreading in busybox :) */
-extern int *const bb_errno;
-#undef errno
-#define errno (*bb_errno)
+/* We use a trick to have more optimized code (fewer pointer reloads
+ * and reduced binary size by a few kilobytes) like:
+ *  ash.c:   extern struct globals *const ash_ptr_to_globals;
+ *  ash_ptr_hack.c: struct globals *ash_ptr_to_globals;
+ * This way, compiler in ash.c knows the pointer can not change.
+ *
+ * However, this may break on weird arches or toolchains. In this case,
+ * set "-DBB_GLOBAL_CONST=''" in CONFIG_EXTRA_CFLAGS to disable
+ * this optimization.
+ */
+#ifndef BB_GLOBAL_CONST
+# define BB_GLOBAL_CONST const
+#endif
+
+#if defined(errno)
+/* If errno is a define, assume it's "define errno (*__errno_location())"
+ * and we will cache it's result in this variable */
+extern int *BB_GLOBAL_CONST bb_errno;
+# undef errno
+# define errno (*bb_errno)
+# define bb_cached_errno_ptr 1
 #endif
 
 #if !(ULONG_MAX > 0xffffffff)
@@ -384,12 +429,37 @@ void *xrealloc(void *old, size_t size) FAST_FUNC;
 	xrealloc_vector_helper((vector), (sizeof((vector)[0]) << 8) + (shift), (idx))
 void* xrealloc_vector_helper(void *vector, unsigned sizeof_and_shift, int idx) FAST_FUNC;
 char *xstrdup(const char *s) FAST_FUNC RETURNS_MALLOC;
-char *xstrndup(const char *s, int n) FAST_FUNC RETURNS_MALLOC;
-void *xmemdup(const void *s, int n) FAST_FUNC RETURNS_MALLOC;
+char *xstrndup(const char *s, size_t n) FAST_FUNC RETURNS_MALLOC;
+void *xmemdup(const void *s, size_t n) FAST_FUNC RETURNS_MALLOC;
+void *mmap_read(int fd, size_t size) FAST_FUNC;
+void *mmap_anon(size_t size) FAST_FUNC;
+void *xmmap_anon(size_t size) FAST_FUNC;
 
+#if defined(__x86_64__) || defined(i386)
+# define BB_ARCH_FIXED_PAGESIZE 4096
+#elif defined(__arm__) /* only 32bit, 64bit ARM has variable page size */
+# define BB_ARCH_FIXED_PAGESIZE 4096
+#else /* if defined(ARCH) */
+/* add you favorite arch today! */
+//From Linux kernel inspection:
+//xtenza,s390[x],riscv,nios2,csky,sparc32: fixed 4k pages
+//sparc64,alpha,openrisc: fixed 8k pages
+#endif
 
-//TODO: supply a pointer to char[11] buffer (avoid statics)?
-extern const char *bb_mode_string(mode_t mode) FAST_FUNC;
+#if defined BB_ARCH_FIXED_PAGESIZE
+# define IF_VARIABLE_ARCH_PAGESIZE(...) /*nothing*/
+# define bb_getpagesize()     BB_ARCH_FIXED_PAGESIZE
+# define INIT_PAGESIZE(var)   ((void)0)
+# define cached_pagesize(var) BB_ARCH_FIXED_PAGESIZE
+#else
+# define IF_VARIABLE_ARCH_PAGESIZE(...) __VA_ARGS__
+# define bb_getpagesize()     getpagesize()
+# define INIT_PAGESIZE(var)   ((var) = getpagesize())
+# define cached_pagesize(var) (var)
+#endif
+
+/* Generate ls-style "mode string" like "-rwsr-xr-x" or "drwxrwxrwt" */
+extern char *bb_mode_string(char buf[11], mode_t mode) FAST_FUNC;
 extern int is_directory(const char *name, int followLinks) FAST_FUNC;
 enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing them! */
 	FILEUTILS_PRESERVE_STATUS = 1 << 0, /* -p */
@@ -397,23 +467,29 @@ enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing th
 	FILEUTILS_RECUR           = 1 << 2, /* -R */
 	FILEUTILS_FORCE           = 1 << 3, /* -f */
 	FILEUTILS_INTERACTIVE     = 1 << 4, /* -i */
-	FILEUTILS_MAKE_HARDLINK   = 1 << 5, /* -l */
-	FILEUTILS_MAKE_SOFTLINK   = 1 << 6, /* -s */
-	FILEUTILS_DEREF_SOFTLINK  = 1 << 7, /* -L */
-	FILEUTILS_DEREFERENCE_L0  = 1 << 8, /* -H */
+	FILEUTILS_NO_OVERWRITE    = 1 << 5, /* -n */
+	FILEUTILS_MAKE_HARDLINK   = 1 << 6, /* -l */
+	FILEUTILS_MAKE_SOFTLINK   = 1 << 7, /* -s */
+	FILEUTILS_DEREF_SOFTLINK  = 1 << 8, /* -L */
+	FILEUTILS_DEREFERENCE_L0  = 1 << 9, /* -H */
 	/* -a = -pdR (mapped in cp.c) */
 	/* -r = -dR  (mapped in cp.c) */
 	/* -P = -d   (mapped in cp.c) */
-	FILEUTILS_VERBOSE         = (1 << 12) * ENABLE_FEATURE_VERBOSE,	/* -v */
-	FILEUTILS_UPDATE          = 1 << 13, /* -u */
-	FILEUTILS_NO_TARGET_DIR	  = 1 << 14, /* -T */
+	FILEUTILS_VERBOSE         = (1 << 13) * ENABLE_FEATURE_VERBOSE,	/* -v */
+	FILEUTILS_UPDATE          = 1 << 14, /* -u */
+	FILEUTILS_NO_TARGET_DIR	  = 1 << 15, /* -T */
+	FILEUTILS_TARGET_DIR	  = 1 << 16, /* -t DIR */
 #if ENABLE_SELINUX
-	FILEUTILS_PRESERVE_SECURITY_CONTEXT = 1 << 15, /* -c */
+	FILEUTILS_PRESERVE_SECURITY_CONTEXT = 1 << 17, /* -c */
 #endif
-	FILEUTILS_RMDEST          = 1 << (16 - !ENABLE_SELINUX), /* --remove-destination */
-	/* bit 17 skipped for "cp --parents" */
-	FILEUTILS_REFLINK         = 1 << (18 - !ENABLE_SELINUX), /* cp --reflink=auto */
-	FILEUTILS_REFLINK_ALWAYS  = 1 << (19 - !ENABLE_SELINUX), /* cp --reflink[=always] */
+#define FILEUTILS_CP_OPTSTR "pdRfinlsLHarPvuTt:" IF_SELINUX("c")
+/* How many bits in FILEUTILS_CP_OPTSTR? */
+	FILEUTILS_CP_OPTBITS      = 18 - !ENABLE_SELINUX,
+
+	FILEUTILS_RMDEST          = 1 << (19 - !ENABLE_SELINUX), /* cp --remove-destination */
+	/* bit 18 skipped for "cp --parents" */
+	FILEUTILS_REFLINK         = 1 << (20 - !ENABLE_SELINUX), /* cp --reflink=auto */
+	FILEUTILS_REFLINK_ALWAYS  = 1 << (21 - !ENABLE_SELINUX), /* cp --reflink[=always] */
 	/*
 	 * Hole. cp may have some bits set here,
 	 * they should not affect remove_file()/copy_file()
@@ -423,7 +499,7 @@ enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing th
 #endif
 	FILEUTILS_IGNORE_CHMOD_ERR = 1 << 31,
 };
-#define FILEUTILS_CP_OPTSTR "pdRfilsLHarPvuT" IF_SELINUX("c")
+
 extern int remove_file(const char *path, int flags) FAST_FUNC;
 /* NB: without FILEUTILS_RECUR in flags, it will basically "cat"
  * the source, not copy (unless "source" is a directory).
@@ -436,15 +512,28 @@ enum {
 	ACTION_FOLLOWLINKS    = (1 << 1),
 	ACTION_FOLLOWLINKS_L0 = (1 << 2),
 	ACTION_DEPTHFIRST     = (1 << 3),
-	/*ACTION_REVERSE      = (1 << 4), - unused */
-	ACTION_QUIET          = (1 << 5),
-	ACTION_DANGLING_OK    = (1 << 6),
+	ACTION_QUIET          = (1 << 4),
+	ACTION_DANGLING_OK    = (1 << 5),
 };
 typedef uint8_t recurse_flags_t;
-extern int recursive_action(const char *fileName, unsigned flags,
-	int FAST_FUNC (*fileAction)(const char *fileName, struct stat* statbuf, void* userData, int depth),
-	int FAST_FUNC (*dirAction)(const char *fileName, struct stat* statbuf, void* userData, int depth),
-	void* userData, unsigned depth) FAST_FUNC;
+typedef struct recursive_state {
+	unsigned flags;
+	unsigned depth;
+	void *userData;
+	int FAST_FUNC (*fileAction)(struct recursive_state *state, const char *fileName, struct stat* statbuf);
+	int FAST_FUNC  (*dirAction)(struct recursive_state *state, const char *fileName, struct stat* statbuf);
+} recursive_state_t;
+int recursive_action(const char *fileName, unsigned flags,
+	int FAST_FUNC (*fileAction)(struct recursive_state *state, const char *fileName, struct stat* statbuf),
+	int FAST_FUNC  (*dirAction)(struct recursive_state *state, const char *fileName, struct stat* statbuf),
+	void *userData
+) FAST_FUNC;
+
+/* Simpler version: call a function on each dirent in a directory */
+int iterate_on_dir(const char *dir_name,
+		int FAST_FUNC (*func)(const char *, struct dirent *, void *),
+		void *private) FAST_FUNC;
+
 extern int device_open(const char *device, int mode) FAST_FUNC;
 enum { GETPTY_BUFSIZE = 16 }; /* more than enough for "/dev/ttyXXX" */
 extern int xgetpty(char *line) FAST_FUNC;
@@ -489,7 +578,7 @@ DIR *xopendir(const char *path) FAST_FUNC;
 DIR *warn_opendir(const char *path) FAST_FUNC;
 
 char *xmalloc_realpath(const char *path) FAST_FUNC RETURNS_MALLOC;
-char *xmalloc_realpath_coreutils(const char *path) FAST_FUNC RETURNS_MALLOC;
+char *xmalloc_realpath_coreutils(char *path) FAST_FUNC RETURNS_MALLOC;
 char *xmalloc_readlink(const char *path) FAST_FUNC RETURNS_MALLOC;
 char *xmalloc_readlink_or_warn(const char *path) FAST_FUNC RETURNS_MALLOC;
 /* !RETURNS_MALLOC: it's a realloc-like function */
@@ -532,7 +621,7 @@ void bb_signals(int sigs, void (*f)(int)) FAST_FUNC;
 /* Unlike signal() and bb_signals, sets handler with sigaction()
  * and in a way that while signal handler is run, no other signals
  * will be blocked; syscalls will not be restarted: */
-void bb_signals_recursive_norestart(int sigs, void (*f)(int)) FAST_FUNC;
+void bb_signals_norestart(int sigs, void (*f)(int)) FAST_FUNC;
 /* syscalls like read() will be interrupted with EINTR: */
 void signal_no_SA_RESTART_empty_mask(int sig, void (*handler)(int)) FAST_FUNC;
 /* syscalls like read() won't be interrupted (though select/poll will be): */
@@ -556,6 +645,7 @@ void xsetgid(gid_t gid) FAST_FUNC;
 void xsetuid(uid_t uid) FAST_FUNC;
 void xsetegid(gid_t egid) FAST_FUNC;
 void xseteuid(uid_t euid) FAST_FUNC;
+int chdir_or_warn(const char *path) FAST_FUNC;
 void xchdir(const char *path) FAST_FUNC;
 void xfchdir(int fd) FAST_FUNC;
 void xchroot(const char *path) FAST_FUNC;
@@ -584,7 +674,7 @@ uoff_t FAST_FUNC get_volume_size_in_bytes(int fd,
 		unsigned override_units,
 		int extend);
 
-void xpipe(int filedes[2]) FAST_FUNC;
+void xpipe(int *filedes) FAST_FUNC;
 /* In this form code with pipes is much more readable */
 struct fd_pair { int rd; int wr; };
 #define piped_pair(pair)  pipe(&((pair).rd))
@@ -618,10 +708,13 @@ struct BUG_too_small {
 };
 
 
-void parse_datestr(const char *date_str, struct tm *ptm) FAST_FUNC;
+int parse_datestr(const char *date_str, struct tm *ptm) FAST_FUNC;
 time_t validate_tm_time(const char *date_str, struct tm *ptm) FAST_FUNC;
 char *strftime_HHMMSS(char *buf, unsigned len, time_t *tp) FAST_FUNC;
 char *strftime_YYYYMMDDHHMMSS(char *buf, unsigned len, time_t *tp) FAST_FUNC;
+void xgettimeofday(struct timeval *tv) FAST_FUNC;
+void xsettimeofday(const struct timeval *tv) FAST_FUNC;
+
 
 int xsocket(int domain, int type, int protocol) FAST_FUNC;
 void xbind(int sockfd, struct sockaddr *my_addr, socklen_t addrlen) FAST_FUNC;
@@ -817,7 +910,7 @@ ssize_t recv_from_to(int fd, void *buf, size_t len, int flags,
 		struct sockaddr *to,
 		socklen_t sa_size) FAST_FUNC;
 
-uint16_t inet_cksum(uint16_t *addr, int len) FAST_FUNC;
+uint16_t inet_cksum(const void *addr, int len) FAST_FUNC;
 int parse_pasv_epsv(char *buf) FAST_FUNC;
 
 /* 0 if argv[0] is NULL: */
@@ -832,6 +925,7 @@ char *xmalloc_substitute_string(const char *src, int count, const char *sub, con
 int bb_putchar(int ch) FAST_FUNC;
 /* Note: does not use stdio, writes to fd 2 directly */
 int bb_putchar_stderr(char ch) FAST_FUNC;
+int fputs_stdout(const char *s) FAST_FUNC;
 char *xasprintf(const char *format, ...) __attribute__ ((format(printf, 1, 2))) FAST_FUNC RETURNS_MALLOC;
 char *auto_string(char *str) FAST_FUNC;
 // gcc-4.1.1 still isn't good enough at optimizing it
@@ -961,6 +1055,7 @@ void die_if_ferror(FILE *file, const char *msg) FAST_FUNC;
 void die_if_ferror_stdout(void) FAST_FUNC;
 int fflush_all(void) FAST_FUNC;
 void fflush_stdout_and_exit(int retval) NORETURN FAST_FUNC;
+void fflush_stdout_and_exit_SUCCESS(void) NORETURN FAST_FUNC;
 int fclose_if_not_stdin(FILE *file) FAST_FUNC;
 FILE* xfopen(const char *filename, const char *mode) FAST_FUNC;
 /* Prints warning to stderr and returns NULL on failure: */
@@ -1000,10 +1095,10 @@ char *smart_ulltoa5(unsigned long long ul, char buf[5], const char *scale) FAST_
 /* If block_size == 0, display size without fractional part,
  * else display (size * block_size) with one decimal digit.
  * If display_unit == 0, show value no bigger than 1024 with suffix (K,M,G...),
- * else divide by display_unit and do not use suffix. */
+ * else divide by display_unit and do not use suffix.
+ * Returns "auto pointer" */
 #define HUMAN_READABLE_MAX_WIDTH      7  /* "1024.0G" */
 #define HUMAN_READABLE_MAX_WIDTH_STR "7"
-//TODO: provide pointer to buf (avoid statics)?
 const char *make_human_readable_str(unsigned long long size,
 		unsigned long block_size, unsigned long display_unit) FAST_FUNC;
 /* Put a string of hex bytes ("1b2e66fe"...), return advanced pointer */
@@ -1017,8 +1112,9 @@ void generate_uuid(uint8_t *buf) FAST_FUNC;
 /* Last element is marked by mult == 0 */
 struct suffix_mult {
 	char suffix[4];
-	unsigned mult;
+	uint32_t mult;
 };
+#define ALIGN_SUFFIX ALIGN4
 extern const struct suffix_mult bkm_suffixes[];
 #define km_suffixes (bkm_suffixes + 1)
 extern const struct suffix_mult cwbkMG_suffixes[];
@@ -1130,7 +1226,6 @@ int BB_EXECVP(const char *file, char *const argv[]) FAST_FUNC;
 #define BB_EXECLP(prog,cmd,...) execlp(prog,cmd,__VA_ARGS__)
 #endif
 void BB_EXECVP_or_die(char **argv) NORETURN FAST_FUNC;
-void exec_prog_or_SHELL(char **argv) NORETURN FAST_FUNC;
 
 /* xvfork() can't be a _function_, return after vfork in child mangles stack
  * in the parent. It must be a macro. */
@@ -1176,11 +1271,16 @@ void run_noexec_applet_and_exit(int a, const char *name, char **argv) NORETURN F
 int find_applet_by_name(const char *name) FAST_FUNC;
 void run_applet_no_and_exit(int a, const char *name, char **argv) NORETURN FAST_FUNC;
 #endif
+void show_usage_if_dash_dash_help(int applet_no, char **argv) FAST_FUNC;
 #if defined(__linux__)
+int re_execed_comm(void) FAST_FUNC;
 void set_task_comm(const char *comm) FAST_FUNC;
 #else
+# define re_execed_comm() 0
 # define set_task_comm(name) ((void)0)
 #endif
+void exit_SUCCESS(void) NORETURN FAST_FUNC;
+void _exit_SUCCESS(void) NORETURN FAST_FUNC;
 
 /* Helpers for daemonization.
  *
@@ -1406,18 +1506,11 @@ int scripted_main(int argc, char** argv) MAIN_EXTERNALLY_VISIBLE;
 
 /* Applets which are useful from another applets */
 int bb_cat(char** argv) FAST_FUNC;
-int ash_main(int argc, char** argv)
-#if ENABLE_ASH || ENABLE_SH_IS_ASH || ENABLE_BASH_IS_ASH
-		MAIN_EXTERNALLY_VISIBLE
-#endif
-;
-int hush_main(int argc, char** argv)
-#if ENABLE_HUSH || ENABLE_SH_IS_HUSH || ENABLE_BASH_IS_HUSH
-		MAIN_EXTERNALLY_VISIBLE
-#endif
-;
+int ash_main(int argc, char** argv) IF_SHELL_ASH(MAIN_EXTERNALLY_VISIBLE);
+int hush_main(int argc, char** argv) IF_SHELL_HUSH(MAIN_EXTERNALLY_VISIBLE);
 /* If shell needs them, they exist even if not enabled as applets */
 int echo_main(int argc, char** argv) IF_ECHO(MAIN_EXTERNALLY_VISIBLE);
+int sleep_main(int argc, char **argv) IF_SLEEP(MAIN_EXTERNALLY_VISIBLE);
 int printf_main(int argc, char **argv) IF_PRINTF(MAIN_EXTERNALLY_VISIBLE);
 int test_main(int argc, char **argv)
 #if ENABLE_TEST || ENABLE_TEST1 || ENABLE_TEST2
@@ -1515,7 +1608,8 @@ int del_loop(const char *device) FAST_FUNC;
  * malloc and return it in *devname.
  * return value is the opened fd to the loop device, or < on error
  */
-int set_loop(char **devname, const char *file, unsigned long long offset, unsigned flags) FAST_FUNC;
+int set_loop(char **devname, const char *file, unsigned long long offset,
+		unsigned long long sizelimit, unsigned flags) FAST_FUNC;
 /* These constants match linux/loop.h (without BB_ prefix): */
 #define BB_LO_FLAGS_READ_ONLY 1
 #define BB_LO_FLAGS_AUTOCLEAR 4
@@ -1529,7 +1623,7 @@ char *bb_ask_noecho_stdin(const char *prompt) FAST_FUNC;
 int bb_ask_y_confirmation_FILE(FILE *fp) FAST_FUNC;
 int bb_ask_y_confirmation(void) FAST_FUNC;
 
-/* Returns -1 if input is invalid. current_mode is a base for e.g. "u+rw" */
+/* Returns -1 if input is invalid. cur_mode is a base for e.g. "u+rw" */
 int bb_parse_mode(const char* s, unsigned cur_mode) FAST_FUNC;
 
 /*
@@ -1591,12 +1685,14 @@ char *bb_simplify_path(const char *path) FAST_FUNC;
 /* Returns ptr to NUL */
 char *bb_simplify_abs_path_inplace(char *path) FAST_FUNC;
 
-#ifndef LOGIN_FAIL_DELAY
-#define LOGIN_FAIL_DELAY 3
-#endif
-extern void bb_do_delay(int seconds) FAST_FUNC;
-extern void change_identity(const struct passwd *pw) FAST_FUNC;
-extern void run_shell(const char *shell, int loginshell, const char **args) NORETURN FAST_FUNC;
+void pause_after_failed_login(void) FAST_FUNC;
+void bb_do_delay(unsigned seconds) FAST_FUNC;
+void msleep(unsigned ms) FAST_FUNC;
+void sleep1(void) FAST_FUNC;
+void change_identity(const struct passwd *pw) FAST_FUNC;
+void exec_shell(const char *shell, int loginshell, const char **args) NORETURN FAST_FUNC;
+void exec_login_shell(const char *shell) NORETURN FAST_FUNC;
+void exec_prog_or_SHELL(char **argv) NORETURN FAST_FUNC;
 
 /* Returns $SHELL, getpwuid(getuid())->pw_shell, or DEFAULT_SHELL.
  * Note that getpwuid result might need xstrdup'ing
@@ -1632,15 +1728,16 @@ extern void selinux_or_die(void) FAST_FUNC;
 
 
 /* setup_environment:
- * if chdir pw->pw_dir: ok: else if to_tmp == 1: goto /tmp else: goto / or die
- * if clear_env = 1: cd(pw->pw_dir), clear environment, then set
+ * if SETUP_ENV_CHDIR:
+ *   if cd(pw->pw_dir): ok: else if SETUP_ENV_TO_TMP: cd(/tmp) else: cd(/) or die
+ * if SETUP_ENV_CLEARENV: cd(pw->pw_dir), clear environment, then set
  *   TERM=(old value)
  *   USER=pw->pw_name, LOGNAME=pw->pw_name
  *   PATH=bb_default_[root_]path
  *   HOME=pw->pw_dir
  *   SHELL=shell
- * else if change_env = 1:
- *   if not root (if pw->pw_uid != 0):
+ * else if SETUP_ENV_CHANGEENV | SETUP_ENV_CHANGEENV_LOGNAME:
+ *   if not root (if pw->pw_uid != 0) or if SETUP_ENV_CHANGEENV_LOGNAME:
  *     USER=pw->pw_name, LOGNAME=pw->pw_name
  *   HOME=pw->pw_dir
  *   SHELL=shell
@@ -1649,10 +1746,11 @@ extern void selinux_or_die(void) FAST_FUNC;
  * NB: CHANGEENV and CLEARENV use setenv() - this leaks memory!
  * If setup_environment() is used is vforked child, this leaks memory _in parent too_!
  */
-#define SETUP_ENV_CHANGEENV (1 << 0)
-#define SETUP_ENV_CLEARENV  (1 << 1)
-#define SETUP_ENV_TO_TMP    (1 << 2)
-#define SETUP_ENV_NO_CHDIR  (1 << 4)
+#define SETUP_ENV_CHANGEENV         (1 << 0)
+#define SETUP_ENV_CHANGEENV_LOGNAME (1 << 1)
+#define SETUP_ENV_CLEARENV          (1 << 2)
+#define SETUP_ENV_TO_TMP            (1 << 3)
+#define SETUP_ENV_CHDIR             (1 << 4)
 void setup_environment(const char *shell, int flags, const struct passwd *pw) FAST_FUNC;
 void nuke_str(char *str) FAST_FUNC;
 #if ENABLE_FEATURE_SECURETTY && !ENABLE_PAM
@@ -1704,6 +1802,7 @@ extern void print_login_issue(const char *issue_file, const char *tty) FAST_FUNC
 extern void print_login_prompt(void) FAST_FUNC;
 
 char *xmalloc_ttyname(int fd) FAST_FUNC RETURNS_MALLOC;
+int is_TERM_dumb(void) FAST_FUNC;
 /* NB: typically you want to pass fd 0, not 1. Think 'applet | grep something' */
 int get_terminal_width_height(int fd, unsigned *width, unsigned *height) FAST_FUNC;
 int get_terminal_width(int fd) FAST_FUNC;
@@ -1802,6 +1901,8 @@ enum {
  * (unless fd is in non-blocking mode),
  * subsequent reads will time out after a few milliseconds.
  * Return of -1 means EOF or error (errno == 0 on EOF).
+ * Nonzero errno is not preserved across the call:
+ * if there was no error, errno will be cleared to 0.
  * buffer[0] is used as a counter of buffered chars and must be 0
  * on first call.
  * timeout:
@@ -1810,6 +1911,8 @@ enum {
  * >=0: poll() for TIMEOUT milliseconds, return -1/EAGAIN on timeout
  */
 int64_t read_key(int fd, char *buffer, int timeout) FAST_FUNC;
+/* This version loops on EINTR: */
+int64_t safe_read_key(int fd, char *buffer, int timeout) FAST_FUNC;
 void read_key_ungets(char *buffer, const char *str, unsigned len) FAST_FUNC;
 
 
@@ -1822,17 +1925,29 @@ unsigned size_from_HISTFILESIZE(const char *hp) FAST_FUNC;
 #  define MAX_HISTORY 0
 # endif
 typedef const char *get_exe_name_t(int i) FAST_FUNC;
+typedef const char *sh_get_var_t(const char *name) FAST_FUNC;
 typedef struct line_input_t {
 	int flags;
 	int timeout;
+# if ENABLE_FEATURE_TAB_COMPLETION
+#  if ENABLE_SHELL_ASH
 	const char *path_lookup;
-# if ENABLE_FEATURE_TAB_COMPLETION \
-&& (ENABLE_ASH  || ENABLE_SH_IS_ASH  || ENABLE_BASH_IS_ASH \
-||  ENABLE_HUSH || ENABLE_SH_IS_HUSH || ENABLE_BASH_IS_HUSH \
-)
+#   define EDITING_HAS_path_lookup 1
+#  else
+#   define EDITING_HAS_path_lookup 0
+#  endif
+#  if ENABLE_SHELL_ASH || ENABLE_SHELL_HUSH
 	/* function to fetch additional application-specific names to match */
 	get_exe_name_t *get_exe_name;
-#  define EDITING_HAS_get_exe_name 1
+#  endif
+# endif
+# if (ENABLE_FEATURE_USERNAME_COMPLETION || ENABLE_FEATURE_EDITING_FANCY_PROMPT) \
+  && (ENABLE_SHELL_ASH || ENABLE_SHELL_HUSH)
+	/* function to fetch value of shell variable */
+	sh_get_var_t *sh_get_var;
+#  define EDITING_HAS_sh_get_var 1
+# else
+#  define EDITING_HAS_sh_get_var 0
 # endif
 # if MAX_HISTORY
 	int cnt_history;
@@ -1857,10 +1972,15 @@ enum {
 	USERNAME_COMPLETION = 4 * ENABLE_FEATURE_USERNAME_COMPLETION,
 	VI_MODE          = 8 * ENABLE_FEATURE_EDITING_VI,
 	WITH_PATH_LOOKUP = 0x10,
-	FOR_SHELL        = DO_HISTORY | TAB_COMPLETION | USERNAME_COMPLETION,
+	LI_INTERRUPTIBLE = 0x20,
+	FOR_SHELL        = DO_HISTORY | TAB_COMPLETION | USERNAME_COMPLETION | LI_INTERRUPTIBLE,
 };
 line_input_t *new_line_input_t(int flags) FAST_FUNC;
+#if ENABLE_FEATURE_EDITING_SAVEHISTORY
 void free_line_input_t(line_input_t *n) FAST_FUNC;
+#else
+# define free_line_input_t(n) free(n)
+#endif
 /*
  * maxsize must be >= 2.
  * Returns:
@@ -1879,11 +1999,6 @@ int read_line_input(const char* prompt, char* command, int maxsize) FAST_FUNC;
 #define read_line_input(state, prompt, command, maxsize) \
 	read_line_input(prompt, command, maxsize)
 #endif
-
-#ifndef EDITING_HAS_get_exe_name
-# define EDITING_HAS_get_exe_name 0
-#endif
-
 
 #ifndef COMM_LEN
 # ifdef TASK_COMM_LEN
@@ -2016,14 +2131,17 @@ char *percent_decode_in_place(char *str, int strict) FAST_FUNC;
 
 
 extern const char bb_uuenc_tbl_base64[] ALIGN1;
+extern const char bb_uuenc_tbl_base32[] ALIGN1;
 extern const char bb_uuenc_tbl_std[] ALIGN1;
 void bb_uuencode(char *store, const void *s, int length, const char *tbl) FAST_FUNC;
 enum {
 	BASE64_FLAG_UU_STOP = 0x100,
+	BASE64_32           = 0x200, /* base32 */
 	/* Sign-extends to a value which never matches fgetc result: */
 	BASE64_FLAG_NO_STOP_CHAR = 0x80,
 };
-const char *decode_base64(char **pp_dst, const char *src) FAST_FUNC;
+char *decode_base64(char *dst, const char **pp_src) FAST_FUNC;
+char *decode_base32(char *dst, const char **pp_src) FAST_FUNC;
 void read_base64(FILE *src_stream, FILE *dst_stream, int flags) FAST_FUNC;
 
 typedef struct md5_ctx_t {
@@ -2063,6 +2181,13 @@ unsigned sha3_end(sha3_ctx_t *ctx, void *resbuf) FAST_FUNC;
 typedef struct md5_ctx_t md5sha_ctx_t;
 #define md5sha_hash md5_hash
 #define sha_end sha1_end
+enum {
+	MD5_OUTSIZE    = 16,
+	SHA1_OUTSIZE   = 20,
+	SHA256_OUTSIZE = 32,
+	SHA512_OUTSIZE = 64,
+	SHA3_OUTSIZE   = 28,
+};
 
 extern uint32_t *global_crc32_table;
 uint32_t *crc32_filltable(uint32_t *tbl256, int endian) FAST_FUNC;
@@ -2162,13 +2287,16 @@ extern const char bb_PATH_root_path[] ALIGN1; /* BB_PATH_ROOT_PATH */
 extern const int const_int_0;
 //extern const int const_int_1;
 
+
 /* This struct is deliberately not defined. */
 /* See docs/keep_data_small.txt */
 struct globals;
 /* '*const' ptr makes gcc optimize code much better.
  * Magic prevents ptr_to_globals from going into rodata.
  * If you want to assign a value, use SET_PTR_TO_GLOBALS(x) */
-extern struct globals *const ptr_to_globals;
+extern struct globals *BB_GLOBAL_CONST ptr_to_globals;
+
+#define barrier() asm volatile ("":::"memory")
 
 #if defined(__clang_major__) && __clang_major__ >= 9
 /* Clang/llvm drops assignment to "constant" storage. Silently.
@@ -2177,29 +2305,37 @@ extern struct globals *const ptr_to_globals;
 static ALWAYS_INLINE void* not_const_pp(const void *p)
 {
 	void *pp;
-	__asm__ __volatile__(
+	asm volatile (
 		"# forget that p points to const"
 		: /*outputs*/ "=r" (pp)
 		: /*inputs*/ "0" (p)
 	);
 	return pp;
 }
-#else
-static ALWAYS_INLINE void* not_const_pp(const void *p) { return (void*)p; }
-#endif
-
-/* At least gcc 3.4.6 on mipsel system needs optimization barrier */
-#define barrier() __asm__ __volatile__("":::"memory")
-#define SET_PTR_TO_GLOBALS(x) do { \
-	(*(struct globals**)not_const_pp(&ptr_to_globals)) = (void*)(x); \
+# define ASSIGN_CONST_PTR(pptr, v) do { \
+	*(void**)not_const_pp(pptr) = (void*)(v); \
 	barrier(); \
 } while (0)
+/* XZALLOC_CONST_PTR() is an out-of-line function to prevent
+ * clang from reading pointer before it is assigned.
+ */
+void XZALLOC_CONST_PTR(const void *pptr, size_t size) FAST_FUNC;
+#else
+# define ASSIGN_CONST_PTR(pptr, v) do { \
+	*(void**)(pptr) = (void*)(v); \
+	/* At least gcc 3.4.6 on mipsel needs optimization barrier */ \
+	barrier(); \
+} while (0)
+# define XZALLOC_CONST_PTR(pptr, size) ASSIGN_CONST_PTR(pptr, xzalloc(size))
+#endif
 
+#define SET_PTR_TO_GLOBALS(x) ASSIGN_CONST_PTR(&ptr_to_globals, x)
 #define FREE_PTR_TO_GLOBALS() do { \
 	if (ENABLE_FEATURE_CLEAN_UP) { \
 		free(ptr_to_globals); \
 	} \
 } while (0)
+
 
 /* You can change LIBBB_DEFAULT_LOGIN_SHELL, but don't use it,
  * use bb_default_login_shell and following defines.

@@ -1,6 +1,6 @@
 VERSION = 1
-PATCHLEVEL = 32
-SUBLEVEL = 0
+PATCHLEVEL = 36
+SUBLEVEL = 1
 EXTRAVERSION =
 NAME = Unnamed
 
@@ -612,6 +612,7 @@ quiet_cmd_busybox__ ?= LINK    $@
       "$(core-y)" \
       "$(libs-y)" \
       "$(LDLIBS)" \
+      "$(CONFIG_EXTRA_LDLIBS)" \
       && $(srctree)/scripts/generate_BUFSIZ.sh --post include/common_bufsiz.h
 
 # Generate System.map
@@ -1299,14 +1300,6 @@ quiet_cmd_rmdirs = $(if $(wildcard $(rm-dirs)),CLEAN   $(wildcard $(rm-dirs)))
 
 quiet_cmd_rmfiles = $(if $(wildcard $(rm-files)),CLEAN   $(wildcard $(rm-files)))
       cmd_rmfiles = rm -f $(rm-files)
-
-
-a_flags = -Wp,-MD,$(depfile) $(AFLAGS) $(AFLAGS_KERNEL) \
-	  $(NOSTDINC_FLAGS) $(CPPFLAGS) \
-	  $(modkern_aflags) $(EXTRA_AFLAGS) $(AFLAGS_$(*F).o)
-
-quiet_cmd_as_o_S = AS      $@
-cmd_as_o_S       = $(CC) $(a_flags) -c -o $@ $<
 
 # read all saved command lines
 

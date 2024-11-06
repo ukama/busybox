@@ -10,7 +10,6 @@
 //config:config FDISK
 //config:	bool "fdisk (37 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	The fdisk utility is used to divide hard disks into one or more
 //config:	logical disks, which are generally called partitions. This utility
@@ -186,8 +185,11 @@ struct hd_geometry {
 
 #define HDIO_GETGEO     0x0301  /* get device geometry */
 
-/* TODO: #if ENABLE_FEATURE_FDISK_WRITABLE */
+/* TODO: just #if ENABLE_FEATURE_FDISK_WRITABLE */
 /* (currently fdisk_sun/sgi.c do not have proper WRITABLE #ifs) */
+#if ENABLE_FEATURE_FDISK_WRITABLE \
+ || ENABLE_FEATURE_SGI_LABEL \
+ || ENABLE_FEATURE_SUN_LABEL
 static const char msg_building_new_label[] ALIGN1 =
 "Building a new %s. Changes will remain in memory only,\n"
 "until you decide to write them. After that the previous content\n"
@@ -195,7 +197,7 @@ static const char msg_building_new_label[] ALIGN1 =
 
 static const char msg_part_already_defined[] ALIGN1 =
 "Partition %u is already defined, delete it before re-adding\n";
-/* #endif */
+#endif
 
 
 struct partition {
@@ -230,8 +232,8 @@ struct pte {
 };
 
 #define unable_to_open "can't open '%s'"
-#define unable_to_read "can't read from %s"
-#define unable_to_seek "can't seek on %s"
+#define unable_to_read "can't read '%s'"
+#define unable_to_seek "can't seek '%s'"
 
 enum label_type {
 	LABEL_DOS, LABEL_SUN, LABEL_SGI, LABEL_AIX, LABEL_OSF, LABEL_GPT
@@ -304,7 +306,7 @@ static sector_t get_nr_sects(const struct partition *p);
 
 /* DOS partition types */
 
-static const char *const i386_sys_types[] = {
+static const char *const i386_sys_types[] ALIGN_PTR = {
 	"\x00" "Empty",
 	"\x01" "FAT12",
 	"\x04" "FAT16 <32M",
@@ -353,6 +355,7 @@ static const char *const i386_sys_types[] = {
 	"\xef" "EFI (FAT-12/16/32)",         /* Intel EFI System Partition */
 	"\xf0" "Linux/PA-RISC boot",         /* Linux/PA-RISC boot loader */
 	"\xf2" "DOS secondary",              /* DOS 3.3+ secondary */
+	"\xf8" "EBBR protective",            /* Arm EBBR firmware protective partition */
 	"\xfd" "Linux raid autodetect",      /* New (2.2.x) raid partition with
 						autodetect using persistent
 						superblock */
@@ -663,7 +666,7 @@ read_line(const char *prompt)
 
 	sz = read_line_input(NULL, prompt, line_buffer, sizeof(line_buffer));
 	if (sz <= 0)
-		exit(EXIT_SUCCESS); /* Ctrl-D or Ctrl-C */
+		exit_SUCCESS(); /* Ctrl-D or Ctrl-C */
 
 	if (line_buffer[sz-1] == '\n')
 		line_buffer[--sz] = '\0';
@@ -2668,7 +2671,7 @@ reread_partition_table(int leave)
 	/* Users with slow external USB disks on a 320MHz ARM system (year 2011)
 	 * report that sleep is needed, otherwise BLKRRPART may fail with -EIO:
 	 */
-	sleep(1);
+	sleep1();
 	i = ioctl_or_perror(dev_fd, BLKRRPART, NULL,
 			"WARNING: rereading partition table "
 			"failed, kernel still uses old table");
@@ -2853,7 +2856,7 @@ xselect(void)
 			if (ENABLE_FEATURE_CLEAN_UP)
 				close_dev_fd();
 			bb_putchar('\n');
-			exit(EXIT_SUCCESS);
+			exit_SUCCESS();
 		case 'r':
 			return;
 		case 's':

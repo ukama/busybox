@@ -404,7 +404,7 @@ static void finalize_tty_attrs(void)
 	set_tty_attrs();
 
 	/* Now the newline character should be properly written */
-	full_write(STDOUT_FILENO, "\n", 1);
+	full_write1_str("\n");
 }
 
 /* extract baud rate from modem status message */
@@ -434,7 +434,7 @@ static void auto_baud(void)
 	 * Wait for a while, then read everything the modem has said so far and
 	 * try to extract the speed of the dial-in call.
 	 */
-	sleep(1);
+	sleep1();
 	nread = safe_read(STDIN_FILENO, G.line_buf, sizeof(G.line_buf) - 1);
 	if (nread > 0) {
 		int speed;
@@ -484,7 +484,7 @@ static char *get_logname(void)
 			if (read(STDIN_FILENO, &c, 1) < 1) {
 				finalize_tty_attrs();
 				if (errno == EINTR || errno == EIO)
-					exit(EXIT_SUCCESS);
+					exit_SUCCESS();
 				bb_simple_perror_msg_and_die(bb_msg_read_error);
 			}
 
@@ -498,20 +498,20 @@ static char *get_logname(void)
 			case 0x7f:
 				G.tty_attrs.c_cc[VERASE] = c;
 				if (bp > G.line_buf) {
-					full_write(STDOUT_FILENO, "\010 \010", 3);
+					full_write1_str("\010 \010");
 					bp--;
 				}
 				break;
 			case CTL('U'):
 				while (bp > G.line_buf) {
-					full_write(STDOUT_FILENO, "\010 \010", 3);
+					full_write1_str("\010 \010");
 					bp--;
 				}
 				break;
 			case CTL('C'):
 			case CTL('D'):
 				finalize_tty_attrs();
-				exit(EXIT_SUCCESS);
+				exit_SUCCESS();
 			case '\0':
 				/* BREAK. If we have speeds to try,
 				 * return NULL (will switch speeds and return here) */
@@ -538,7 +538,7 @@ static char *get_logname(void)
 static void alarm_handler(int sig UNUSED_PARAM)
 {
 	finalize_tty_attrs();
-	_exit(EXIT_SUCCESS);
+	_exit_SUCCESS();
 }
 
 static void sleep10(void)

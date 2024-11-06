@@ -446,13 +446,13 @@ static char *get_name(char name[IFNAMSIZ], char *p)
  * %n specifiers (even the size of integers may not match).
  */
 #if INT_MAX == LONG_MAX
-static const char *const ss_fmt[] = {
+static const char *const ss_fmt[] ALIGN_PTR = {
 	"%n%llu%u%u%u%u%n%n%n%llu%u%u%u%u%u",
 	"%llu%llu%u%u%u%u%n%n%llu%llu%u%u%u%u%u",
 	"%llu%llu%u%u%u%u%u%u%llu%llu%u%u%u%u%u%u"
 };
 #else
-static const char *const ss_fmt[] = {
+static const char *const ss_fmt[] ALIGN_PTR = {
 	"%n%llu%lu%lu%lu%lu%n%n%n%llu%lu%lu%lu%lu%lu",
 	"%llu%llu%lu%lu%lu%lu%n%n%llu%llu%lu%lu%lu%lu%lu",
 	"%llu%llu%lu%lu%lu%lu%lu%lu%llu%llu%lu%lu%lu%lu%lu%lu"
@@ -731,7 +731,7 @@ static const struct hwtype ib_hwtype = {
 #endif
 
 
-static const struct hwtype *const hwtypes[] = {
+static const struct hwtype *const hwtypes[] ALIGN_PTR = {
 	&loop_hwtype,
 	&ether_hwtype,
 	&ppp_hwtype,
@@ -746,7 +746,7 @@ static const struct hwtype *const hwtypes[] = {
 };
 
 #ifdef IFF_PORTSEL
-static const char *const if_port_text[] = {
+static const char *const if_port_text[] ALIGN_PTR = {
 	/* Keep in step with <linux/netdevice.h> */
 	"unknown",
 	"10base2",

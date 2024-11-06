@@ -14,7 +14,6 @@
 //config:config HDPARM
 //config:	bool "hdparm (25 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	Get/Set hard drive parameters. Primarily intended for ATA
 //config:	drives.
@@ -799,7 +798,7 @@ static void identify(uint16_t *val)
 	if (!(val[GEN_CONFIG] & NOT_ATA)) {
 		dev = ATA_DEV;
 		printf("ATA device, with ");
-	} else if (val[GEN_CONFIG]==CFA_SUPPORT_VAL) {
+	} else if (val[GEN_CONFIG] == CFA_SUPPORT_VAL) {
 		dev = ATA_DEV;
 		like_std = 4;
 		printf("CompactFlash ATA device, with ");
@@ -820,13 +819,13 @@ static void identify(uint16_t *val)
 	 * specific, it should be safe to check it now, even though we don't
 	 * know yet what standard this device is using.
 	 */
-	if ((val[CONFIG]==STBY_NID_VAL) || (val[CONFIG]==STBY_ID_VAL)
-	 || (val[CONFIG]==PWRD_NID_VAL) || (val[CONFIG]==PWRD_ID_VAL)
+	if ((val[CONFIG] == STBY_NID_VAL) || (val[CONFIG] == STBY_ID_VAL)
+	 || (val[CONFIG] == PWRD_NID_VAL) || (val[CONFIG] == PWRD_ID_VAL)
 	) {
 		like_std = 5;
-		if ((val[CONFIG]==STBY_NID_VAL) || (val[CONFIG]==STBY_ID_VAL))
+		if ((val[CONFIG] == STBY_NID_VAL) || (val[CONFIG] == STBY_ID_VAL))
 			puts("powers-up in standby; SET FEATURES subcmd spins-up.");
-		if (((val[CONFIG]==STBY_NID_VAL) || (val[CONFIG]==PWRD_NID_VAL)) && (val[GEN_CONFIG] & INCOMPLETE))
+		if (((val[CONFIG] == STBY_NID_VAL) || (val[CONFIG] == PWRD_NID_VAL)) && (val[GEN_CONFIG] & INCOMPLETE))
 			puts("\n\tWARNING: ID response incomplete.\n\tFollowing data may be incorrect.\n");
 	}
 
@@ -854,7 +853,7 @@ static void identify(uint16_t *val)
 			printf("\n\tSupported: ");
 			jj = val[MAJOR] << 1;
 			kk = like_std >4 ? like_std-4: 0;
-			for (ii = 14; (ii >0)&&(ii>kk); ii--) {
+			for (ii = 14; (ii > 0) && (ii > kk); ii--) {
 				if (jj & 0x8000) {
 					printf("%u ", ii);
 					if (like_std < ii) {
@@ -944,7 +943,7 @@ static void identify(uint16_t *val)
 		for (ii = 1; ii < 15; ii++) {
 			if (jj & 0x0001)
 				printf("\t%s\n", nth_string(ata1_cfg_str, ii));
-			jj >>=1;
+			jj >>= 1;
 		}
 	}
 	if (dev == ATAPI_DEV) {
@@ -953,7 +952,7 @@ static void identify(uint16_t *val)
 		else if ((val[GEN_CONFIG] & DRQ_RESPONSE_TIME) ==  DRQ_INTR_VAL)
 			strng = "<=10ms with INTRQ";
 		else if ((val[GEN_CONFIG] & DRQ_RESPONSE_TIME) ==  DRQ_50US_VAL)
-			strng ="50us";
+			strng = "50us";
 		else
 			strng = "unknown";
 		printf("\tDRQ response: %s\n\tPacket size: ", strng); /* Data Request (DRQ) */
@@ -1015,7 +1014,7 @@ static void identify(uint16_t *val)
 		}
 
 		if (!bbbig)
-			bbbig = (uint64_t)(ll>mm ? ll : mm); /* # 512 byte blocks */
+			bbbig = (uint64_t)(ll > mm ? ll : mm); /* # 512 byte blocks */
 		printf("\tdevice size with M = 1024*1024: %11"PRIu64" MBytes\n", bbbig>>11);
 		bbbig = (bbbig << 9) / 1000000;
 		printf("\tdevice size with M = 1000*1000: %11"PRIu64" MBytes ", bbbig);
@@ -1161,7 +1160,7 @@ static void identify(uint16_t *val)
 		jj = ((val[ADV_PIO_MODES] & PIO_SUP) << 3) | 0x0007;
 		for (ii = 0; ii <= PIO_MODE_MAX; ii++) {
 			if (jj & 0x0001) printf("pio%d ", ii);
-			jj >>=1;
+			jj >>= 1;
 		}
 		bb_putchar('\n');
 	} else if (((min_std < 5) || (eqpt == CDROM)) && (val[PIO_MODE] & MODE)) {
@@ -1200,7 +1199,7 @@ static void identify(uint16_t *val)
 			}
 			if (ii == 31) {
 				if ((val[CMDS_SUPP_2] & VALID) != VALID_VAL)
-					ii +=16;
+					ii += 16;
 			}
 		}
 	}
@@ -1221,7 +1220,7 @@ static void identify(uint16_t *val)
 				printf("\t%s\t%s\n",
 					(!(jj & 0x0001)) ? "not" : "",
 					nth_string(secu_str, ii));
-				jj >>=1;
+				jj >>= 1;
 			}
 			if (val[SECU_STATUS] & SECU_ENABLED) {
 				printf("\tSecurity level %s\n",
@@ -1272,7 +1271,7 @@ static void identify(uint16_t *val)
 		}
 	}
 
-	exit(EXIT_SUCCESS);
+	exit_SUCCESS();
 }
 #endif
 
@@ -1367,7 +1366,7 @@ static NOINLINE void dump_identity(const struct hd_driveid *id)
 	}
 	if (id->capability & 1) {
 		if (id->dma_1word | id->dma_mword) {
-			static const int dma_wmode_masks[] = { 0x100, 1, 0x200, 2, 0x400, 4, 0xf800, 0xf8 };
+			static const int dma_wmode_masks[] ALIGN4 = { 0x100, 1, 0x200, 2, 0x400, 4, 0xf800, 0xf8 };
 			printf("\n DMA modes:  ");
 			print_flags_separated(dma_wmode_masks,
 				"*\0""sdma0 \0""*\0""sdma1 \0""*\0""sdma2 \0""*\0""sdma? \0",
@@ -1437,7 +1436,7 @@ static void flush_buffer_cache(/*int fd*/ void)
 	fsync(fd);				/* flush buffers */
 	ioctl_or_warn(fd, BLKFLSBUF, NULL); /* do it again, big time */
 #ifdef HDIO_DRIVE_CMD
-	sleep(1);
+	sleep1();
 	if (ioctl(fd, HDIO_DRIVE_CMD, NULL) && errno != EINVAL) {	/* await completion */
 		if (ENABLE_IOCTL_HEX2STR_ERROR) /* To be coherent with ioctl_or_warn */
 			bb_simple_perror_msg("HDIO_DRIVE_CMD");
@@ -1512,7 +1511,7 @@ static void do_time(int cache /*,int fd*/)
 	 * NB: *small* delay. User is expected to have a clue and to not run
 	 * heavy io in parallel with measurements. */
 	sync();
-	sleep(1);
+	sleep1();
 	if (cache) { /* Time cache */
 		seek_to_zero();
 		read_big_block(buf);

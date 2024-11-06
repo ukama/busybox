@@ -120,7 +120,7 @@ int vlock_main(int argc UNUSED_PARAM, char **argv)
 		if (ask_and_check_password(pw) > 0) {
 			break;
 		}
-		bb_do_delay(LOGIN_FAIL_DELAY);
+		pause_after_failed_login();
 		puts("Incorrect password");
 	}
 
@@ -128,5 +128,5 @@ int vlock_main(int argc UNUSED_PARAM, char **argv)
 	ioctl(STDIN_FILENO, VT_SETMODE, &ovtm);
 #endif
 	tcsetattr_stdin_TCSANOW(&oterm);
-	fflush_stdout_and_exit(EXIT_SUCCESS);
+	fflush_stdout_and_exit_SUCCESS();
 }

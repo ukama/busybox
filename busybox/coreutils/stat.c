@@ -31,7 +31,6 @@
 //config:	bool "Enable display of filesystem status (-f)"
 //config:	default y
 //config:	depends on STAT
-//config:	select PLATFORM_LINUX # statfs()
 //config:	help
 //config:	Without this, stat will not support the '-f' option to display
 //config:	information about filesystem status.
@@ -41,7 +40,7 @@
 //kbuild:lib-$(CONFIG_STAT) += stat.o
 
 //usage:#define stat_trivial_usage
-//usage:       "[OPTIONS] FILE..."
+//usage:       "[-lt"IF_FEATURE_STAT_FILESYSTEM("f")"] "IF_FEATURE_STAT_FORMAT("[-c FMT] ")"FILE..."
 //usage:#define stat_full_usage "\n\n"
 //usage:       "Display file"
 //usage:            IF_FEATURE_STAT_FILESYSTEM(" (default) or filesystem")
@@ -209,7 +208,7 @@ FS_TYPE(0x62656572, "sysfs")
 static const char *human_fstype(uint32_t f_type)
 {
 # define FS_TYPE(type, name) type,
-	static const uint32_t fstype[] = {
+	static const uint32_t fstype[] ALIGN4 = {
 		FS_TYPE_LIST
 	};
 # undef FS_TYPE
@@ -340,7 +339,8 @@ static void FAST_FUNC print_stat(char *pformat, const char m,
 		strcat(pformat, "lo");
 		printf(pformat, (unsigned long) (statbuf->st_mode & (S_ISUID|S_ISGID|S_ISVTX|S_IRWXU|S_IRWXG|S_IRWXO)));
 	} else if (m == 'A') {
-		printfs(pformat, bb_mode_string(statbuf->st_mode));
+		char modestr[12];
+		printfs(pformat, bb_mode_string(modestr, statbuf->st_mode));
 	} else if (m == 'f') {
 		strcat(pformat, "lx");
 		printf(pformat, (unsigned long) statbuf->st_mode);
@@ -440,7 +440,7 @@ static void print_it(const char *masterformat,
 
 		/* print preceding string */
 		*p = '\0';
-		fputs(b, stdout);
+		fputs_stdout(b);
 
 		p += len;
 		b = p + 1;
@@ -703,6 +703,7 @@ static bool do_stat(const char *filename, const char *format)
 			bb_putchar('\n');
 # endif
 	} else {
+		char modestr[12];
 		char *linkname = NULL;
 		struct passwd *pw_ent;
 		struct group *gw_ent;
@@ -737,7 +738,7 @@ static bool do_stat(const char *filename, const char *format)
 			bb_putchar('\n');
 		printf("Access: (%04lo/%10.10s)  Uid: (%5lu/%8s)   Gid: (%5lu/%8s)\n",
 		       (unsigned long) (statbuf.st_mode & (S_ISUID|S_ISGID|S_ISVTX|S_IRWXU|S_IRWXG|S_IRWXO)),
-		       bb_mode_string(statbuf.st_mode),
+		       bb_mode_string(modestr, statbuf.st_mode),
 		       (unsigned long) statbuf.st_uid,
 		       (pw_ent != NULL) ? pw_ent->pw_name : "UNKNOWN",
 		       (unsigned long) statbuf.st_gid,
